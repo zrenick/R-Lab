@@ -1,0 +1,220 @@
+---
+title: "PS2"
+author: "Zack Renick"
+date: '`r Sys.Date()`'
+output: pdf_document
+header-includes:
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/Users/econgrad/Documents/Econ_294A/data"))
+```
+
+#Question 1
+#1)
+```{r}
+library(readxl)
+data = read_xlsx('JSTdatasetR3.xlsx',sheet=2)
+#Subset the data we want for just Canada
+newdata = subset(data, data$country == "Canada", select = c("year", "rgdpmad", "rgdppc", "cpi", "stir", "ltrate", "crisisJST"))
+#Summary Statistics
+library(knitr)
+sum_stats = sapply(newdata[,2:7], summary)
+sum_stats = do.call("cbind",sum_stats)
+sum_stats = round(sum_stats,2)
+sum_stats = sum_stats[-7,] #When I ran the sapply and do.call there was an extra row at the bottom so I just removed it. 
+kable(sum_stats,caption='Summary statistics')
+```
+#2)
+```{r}
+#Time Series Plots
+library(ggplot2)
+rgdpmad = ggplot(data = newdata,aes(x=year,y=rgdpmad))+
+  geom_line(col='red',linewidth = .5)+
+  theme_classic()+
+  ggtitle('Real GDP per capita (PPP) over time')
+
+rgdppc = ggplot(data = newdata,aes(x=year,y=rgdppc))+
+  geom_line(col='red',linewidth = .5)+
+  theme_classic()+
+  ggtitle('Real GDP per capita (index) over time')
+
+cpi = ggplot(data = newdata,aes(x=year,y=cpi))+
+  geom_line(col='red',linewidth = .5)+
+  theme_classic()+
+  ggtitle('Consumer prices over time')
+
+stir = ggplot(data = newdata,aes(x=year,y=stir))+
+  geom_line(col='red',linewidth = .5)+
+  theme_classic()+
+  ggtitle('Short-term interest rate over time')
+
+ltrate = ggplot(data = newdata,aes(x=year,y=ltrate))+
+  geom_line(col='red',linewidth = .5)+
+  theme_classic()+
+  ggtitle('Long-term interest rate over time')
+
+crisisJST = ggplot(data = newdata,aes(x=year,y=crisisJST))+
+  geom_line(col='red',linewidth = .5)+
+  theme_classic()+
+  ggtitle('Systemic financial crises over time')
+
+comboplot <- gridExtra::grid.arrange(rgdpmad, rgdppc, cpi, stir, ltrate, crisisJST, ncol = 3)
+ggsave('Plots.pdf', comboplot, width = 10, height = 10)
+```
+
+#3)
+```{r}
+library(doParallel)
+n.cores <- parallel::detectCores() - 1
+registerDoParallel(cores=n.cores)
+my.cluster <- parallel::makeCluster(n.cores, type = "PSOCK")
+doParallel::registerDoParallel(cl = my.cluster)
+
+
+library(class)
+d = data[data$country == "Canada",]
+d1 = d[,colnames(d) %in% c("year", "rgdpmad", "rgdppc", "cpi", "stir", "ltrate", "crisisJST")] #creating the subset with the variables we want
+d1 = d1[complete.cases(d1),] #remove missing observations
+y = d1$crisisJST #indicator variable that we are training the classification for
+x = cbind(d1$year,d1$rgdpmad,d1$rgdppc, d1$cpi, d1$stir, d1$ltrate) #all the diff indp var that we want to work on
+x = scale(x) #standadize the predictors
+
+# Train - test split
+N = dim(d1)
+
+# Split 80% of the resampled data as training and the rest as test
+Ntrain = round(N[1] * .8,0)
+
+s1 = sample(N[1],Ntrain,replace = FALSE)
+Train = d1[s1,]
+Test = d1[-s1,]
+kseq = (1:nrow(Train))
+
+pred_error = rep(0,length(kseq)) #For each of the k neighbors we define a prediction error
+
+value_of_k = foreach(b=1:length(kseq),.combine = rbind, .packages="class") %dopar% {
+  
+  xtrain = Train[,colnames(Train) != 'crisisJST']
+  xtest = Test[,colnames(Test) != 'crisisJST']
+  
+  ytrain = Train$crisisJST
+  ytest = Test$crisisJST
+  
+  #Run k-nearest neighbors and predict outcome on test data
+  train.knn.pred = knn(xtrain,xtest,ytrain,k=b)
+  
+  # compute test error
+  pred_error[b] = mean(ytest != train.knn.pred)
+}
+
+which.min(pred_error)
+
+
+```
+#4)
+```{r}
+logistic_reg = glm(crisisJST ~ ., data=Train, family = 'binomial')
+pred = predict(logistic_reg, Test)
+test_error = mean(Test$crisisJST!=pred)
+test_error
+```
+In this case both models predict an error of 1, so neither is better in this case. 
+
+#Question 2
+#1)
+```{r}
+library(haven)
+data = read_dta("PriceData.dta")
+summary(data)
+```
+#2)
+```{r}
+#Grabbing the columns from the dataframe we want to use
+mydata <- data[, c('metalc', 'fuelc', 'crudeoilc', 'naturalgasc',
+'coalc', 'fuell', 'crudeoill', 'naturalgasl', 'coall')]
+#Getting a vector of correleations between the covariates 
+cormat <- round(cor(mydata),2)
+
+##Functions for the correlation matrix and heatmap
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+# Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+#Reorder the correlation matrix
+  reorder_cormat <- function(cormat){
+  # Use correlation between variables as distance
+  dd <- as.dist((1-cormat)/2)
+  hc <- hclust(dd)
+  cormat <-cormat[hc$order, hc$order]
+  }
+
+##Creating the actual heatmap
+library(reshape2)
+library(ggplot2)
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+#Add text and labels to the heatmap
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+ggsave("Heatmap_Q1.pdf", ggheatmap)
+```
+#3)
+```{r}
+#OLS Regression
+OLS = lm(metalc ~ fuelc + crudeoilc + naturalgasc + fuell + crudeoill + naturalgasl + coall, data = data)
+#Quantile Regressions
+library(quantreg)
+taus <- c(seq(0.1, 0.90, by = 0.1))
+for(i in 1:length(taus)) {
+  qfit <- rq(metalc ~ fuelc + crudeoilc + naturalgasc + fuell + crudeoill + naturalgasl + coall, data = data, tau = taus[i])
+}
+##Plotting
+library(quantreg)
+pdf(file = "PS2_Q2_Quantile_Plot.pdf")
+qfit_9 <- summary(rq(metalc ~ fuelc + crudeoilc + naturalgasc + fuell + crudeoill + naturalgasl + coall, data = data, tau = taus))
+plot(qfit_9, parm=c(2:8), level = 0.95)
+dev.off()
+
+
+```
+#4)
+```{r}
+library(gamlr)
+Y = data$metalc
+X = model.matrix(metalc ~ fuelc + crudeoilc + naturalgasc + fuell + crudeoill + naturalgasl + coall, data = data)[,-1]
+lasso_model = cv.gamlr(X, Y, nfolds = 10)
+best_lambda <- lasso_model$lambda.min
+cat("The optimal choice of lambda is" , best_lambda )
+```
+

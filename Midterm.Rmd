@@ -1,0 +1,100 @@
+---
+title: "Midterm"
+author: "Zack Renick"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("C:/Users/Yu-Gi/OneDrive/Documents/School Laptop/Econ_294A/data"))
+```
+
+#Problem 1
+```{r}
+logit_fun <- function(x){
+  if(x >= 1 || x <= 0){
+    print('Please input an x value between 0 and 1')
+  }
+  else{
+    temp = log(x/(1-x))
+    return(temp)
+    }
+}
+logit_fun(.5)
+logit_fun(0)
+logit_fun(1)
+logit_fun(2)
+```
+#Problem 2
+```{r}
+library(AER)
+data("CPS1985")
+CPS1985$logwage = log(CPS1985$wage)
+library(ggplot2)
+P1 = ggplot(data = CPS1985,aes(x=experience,y=logwage))+
+  geom_point(col='red',size = 2)+
+  theme_classic() + geom_smooth(method='lm', formula= y~x) +
+  ggtitle('Experience vs Log Wage')
+ggsave('Q2_1.png',width=10,height=10)
+P2 = ggplot(data = CPS1985,aes(x=education,y=logwage))+
+  geom_point(col='red',size = 2)+
+  theme_classic()+
+  ggtitle('Education Vs Log Wage') + geom_smooth(method='lm', formula= y~x)
+ggsave('Q2_2.png',width=10,height=10)
+```
+
+#Problem 3:
+```{r}
+library(AER)
+data("CPS1985")
+P1 <- ggplot(data = CPS1985,aes(x = as.factor(education), y= wage , fill=education)) +
+  geom_boxplot(alpha = 0.5, position = 'dodge') +
+  theme_bw() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5)) + ggtitle('Wage Vs Education') + geom_smooth(method='lm', formula= y~x)
+ggsave('Q3_1.png',width=10,height=10)
+P2 <- ggplot(data = CPS1985,aes(x = as.factor(experience), y= wage, fill=experience)) +
+  geom_boxplot(alpha = 0.5, position = 'dodge') +
+  theme_bw() +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5)) + ggtitle('Wage Vs Experience') + geom_smooth(method='lm', formula= y~x)
+ggsave('Q3_2.png',width=10,height=10)
+```
+
+#Problem 4
+```{r}
+library(AER)
+data("PSID1976")
+PSID1976$kids <- as.factor(ifelse((PSID1976$youngkids > 0 & PSID1976$oldkids > 0), 'yes' , 'no'))
+nwincome = PSID1976$fincome - (PSID1976$hours * PSID1976$wage)
+```
+
+#Problem 5
+```{r}
+library(AER)
+data("PSID1976")
+new_data = PSID1976[PSID1976$participation == 'yes',]
+new_data$log_hours_wage = as.numeric(log(new_data$hours * new_data$wage))
+new_data$age_2 = (new_data$age)^2
+new_data$kids = as.numeric(new_data$youngkids + new_data$oldkids)
+lm_fit = lm(log_hours_wage ~ age + age_2 + education + kids, data = new_data)
+
+```
+
+#Problem 6
+```{r}
+#Running the B-P for reteroskedasticity on our regression. 
+library(olsrr)
+ols_test_breusch_pagan(lm_fit)
+```
+
+#Problem 7
+```{r}
+library(sandwich)
+library(lmtest)
+#TO correct for heteroskdasicity we can use one of the below codes for robust standard errors. 
+coeftest(lmTFP, vcov.=NeweyWest(lm_fit, lag=1, adjust=TRUE, verbose=TRUE))
+coeftest(lmTFP, vcov.=vcovHC(lm_fit, type="HC1")) 
+coeftest(lmTFP, vcov.=vcovHC(lm_fit, type="const"))
+```
+

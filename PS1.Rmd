@@ -1,0 +1,177 @@
+---
+title: "Problem Set 1"
+author: "Zack Renick"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/Users/econgrad/Documents/Econ_294A/data"))
+```
+
+#Problem 1
+```{r}
+ETH_USD <- read.csv('ETH-USD.csv')
+summary(ETH_USD[c('Open', 'Close', 'High', 'Low', 'Adj.Close' , 'Volume')])
+
+#Solution
+library(knitr)
+sum_fun = function(x)
+{
+r = lapply(ETH_USD[,2:7], summary)
+r = do.call("rbind",r)
+r = data.frame(r)
+colnames(r) = c('Min','Q1','Median','Mean','Q3','Max')
+rownames(r) = c('Open','High','Low','Close','Adj.Close','Volume')
+r = round(r,2)
+return(r)
+}
+r1 = sum_fun(ETH_USD)
+kable(r1,caption='Summary statistics')
+
+#Testing sapply to directly create a matrix
+r2 = sapply(ETH_USD[,2:7], summary)
+r2 = round(r2,2)
+kable(r2,caption='Summary statistics')
+```
+#Problem 2
+```{r}
+trading_volume <- function(start,end){
+  new_data = ETH_USD[ETH_USD$Date >= start & ETH_USD$Date <= end,]
+  a = mean(new_data$Volume)
+  b = sd(new_data$Volume)
+  d = b / a * 100
+  return(c(a,b,d))
+  return(list(a,b,d))
+}
+x <- as.Date(readline(prompt = "Enter the start date as YYYY-MM-DD."))
+y <- as.Date(readline(prompt = "Enter the end date as YYYY-MM-DD."))
+trading_volume(x,y)
+
+#Solution
+test = data.frame(ETH_USD)
+test$Date = as.Date(test$Date,format = "%d-%m-%Y")
+
+trade_assist = function(start_date,end_date){
+  if(typeof(start_date) == 'character'|| typeof(end_date) == 'character'){
+    print('Please input date value as start date and end date')
+  }
+  else{
+    if(start_date > end_date){
+      print('ERROR!! Start date should be before end date')
+    }
+  else{
+    temp = ETH_USD$volume[ETH_USD$Date >= start_date & ETH_USD$Date <= end_date]
+    m = round(mean(temp),2)
+    s = round(sd(temp),2)
+    cv = round(s/m,2)
+    tt = list(mean = m,sd = s,cv = paste("The coefficient of variation is:",as.character(cv)))
+    print(tt)
+    return(tt)
+    }
+  }
+}
+```
+This will print out NA's in the trading_volume vector when knit into the pdf format as a prompt cannot be entered. But I felt this was a fluid way to make a function that someone could copy and use for this task. 
+
+#Problem 3
+#Step 1
+```{r}
+N = 10000 # Sample size
+library(doParallel)
+set.seed(112) 
+n.cores <- parallel::detectCores() - 1
+registerDoParallel(cores=n.cores)
+
+x = rbeta(N, 5, 1)
+z = rnorm(N, 10,1)
+e = rnorm(N, 10,10)
+a = .7
+b = .3
+c=.6
+y = a + b * x + c * z + e
+
+```
+
+#Step 2
+```{r}
+reg = lm(y ~ x + z)
+coef = coef(reg)
+cat("The estimated coefficents for a0, a1, and a2 are", round(coef[1],digits=4), "," ,
+round(coef[2],digits=4), ", and" ,round(coef[3],digits=4),"respectfully.")
+```
+#Step 3 
+```{r}
+B = 10000
+bootstrap_coeff = foreach(b =1:B,.combine = 'cbind') %dopar% {
+  set.seed(b)
+  indices <- sample(N,N,replace = T)
+  x1 = x[indices]
+  z1 = z[indices]
+  y1 = y[indices]
+  fit<-lm(y1 ~ x1 + z1)
+  fit$coefficients
+}
+CI = quantile(bootstrap_coeff,c(.025, .975))
+cat("The 95% bootstrap confidence interval for the regression coefficients 
+is (" , CI[1], "," , CI[2] , ").")
+```
+#Step 4
+```{r}
+library(tictoc)
+my.cluster <- parallel::makeCluster(n.cores, type = "PSOCK")
+doParallel::registerDoParallel(cl = my.cluster)
+foreach::getDoParRegistered()
+foreach::getDoParWorkers()
+
+tic('Parallel processing')
+bootstrap_coeff = foreach(b =1:B,.combine = 'cbind') %dopar% {
+  set.seed(b)
+  indices <- sample(N,N,replace = T)
+  x1 = x[indices]
+  z1 = z[indices]
+  y1 = y[indices]
+  fit<-lm(y1 ~ x1 + z1)
+  fit$coefficients
+}
+toc()
+CI = quantile(bootstrap_coeff,c(.025, .975))
+cat("The 95% bootstrap confidence interval for the regression coefficients 
+is (" , CI[1], "," , CI[2] , ").")
+
+tic('No Parallel processing')
+bootstrap_coeff = foreach(b =1:B,.combine = 'cbind') %do% {
+  set.seed(b)
+  indices <- sample(N,N,replace = T)
+  x1 = x[indices]
+  z1 = z[indices]
+  y1 = y[indices]
+  fit<-lm(y1 ~ x1 + z1)
+  fit$coefficients
+}
+toc()
+CI = quantile(bootstrap_coeff,c(.025, .975))
+cat("The 95% bootstrap confidence interval for the regression coefficients 
+is (" , CI[1], "," , CI[2] , ").")
+
+tic('Simple For Loop')
+cc = rep(0,B)
+for(i in 1:B)
+{
+  set.seed(b)
+  indices <- sample(N[1],N[1],replace = T)
+  x1 = x[indices]
+  z1 = z[indices]
+  y1 = y[indices]
+  fit<-lm(y1 ~ x1 + z1)
+  cc[i] = fit$coefficients[2]
+}
+toc()
+CI = quantile(bootstrap_coeff,c(.025, .975))
+cat("The 95% bootstrap confidence interval for the regression coefficients 
+is (" , CI[1], "," , CI[2] , ").")
+
+parallel::stopCluster(cl = my.cluster)
+```
+
+So we observe that when using parallel processing we get a much shorter run time when performing the bootstrapping of the coefficients. 

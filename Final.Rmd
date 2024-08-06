@@ -1,0 +1,346 @@
+---
+title: "Final Exam"
+author: "Zack Renick"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+header-includes: \usepackage{fvextra} \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("C:/Users/Yu-Gi/OneDrive/Documents/School Laptop/Econ_294A/data", winslash = "/", mustWork = TRUE))
+
+```
+
+##Question 1
+
+#1)
+```{r}
+country = read.csv("country_list.csv")
+library(stringr)
+#Create a vector countaining the countires with BBB- and BBB+ rating
+vector = country$Country[country$Rating == 'BBB-' | country$Rating == 'BBB -' | country$Rating == 'BBB+']
+vector
+```
+#2)
+```{r}
+weo = read.csv("WEOOct2018all.csv")
+#Subset the data by the vecotr of the countries to give us the dataframe with just those countries
+weo_clean = subset(weo, Country %in% vector)
+#Now remove the extra years past 2016 and the 'Estimates,Start.After' column
+weo_clean = subset(weo_clean, select = -c(X2017,X2018,X2019,X2020,X2021,X2022,X2023, Estimates.Start.After))
+```
+#3)
+```{r}
+#Vector of the year columns we want to remove the -'s and the n/a's from
+
+clean <- function(column){
+  #Remove the "-" symbol and replace with ""
+  column = gsub(pattern = "-", replacement = "", column)
+  #Remove the "n/a" and replace with ""
+  column = gsub(pattern = "n/a", replacement = "", column)
+  return(column)
+}
+weo_clean[,c(10:46)] = data.frame(lapply(weo_clean[,c(10:46)], clean))
+
+#Make everything in the dataframe numeric
+weo_clean[,c(10:46)] = lapply(weo_clean[,c(10:46)], as.numeric)
+
+#Omit any missing values from the dataframe
+weo_clean = weo_clean[!is.na(weo_clean$X2016),]
+
+
+```
+#4)
+```{r}
+funct <- function(dataset,variable_code_name){
+  library(ggplot2)
+  library(glue)
+  #This allows you to pass in a funct argument as a string to use for a label
+  var_code_name_str <- rlang::as_label(enquo(variable_code_name))
+  #subsetting the dataset to be of just the code we want
+  data = subset(dataset, WEO.Subject.Code == variable_code_name)
+  #grabbing the country name and amount of the variable code for 2016
+  result = data.frame(data[c('Country','X2016')])
+  #plotting each of the countries and their values
+  p<-plot(ggplot(result, aes(x=Country, y=X2016, fill=Country)) +
+  geom_bar(stat="identity")+theme_minimal() + labs(y= '2016') + labs(title = glue("Countries {variable_code_name} for 2016")))
+  return(c(result,p))
+}
+#Testing that the function works for a given variable code.
+funct(weo_clean, 'GGXCNL_NGDP')
+
+
+```
+##Question 2
+
+#1)
+```{r}
+college = read.csv("college.csv")
+library(ggplot2)
+library(tidyverse)
+#Changing Private into a 0 and a 1 to be able to use the logit model
+college$Dummy = 0 #Public
+college$Dummy[college$Private == 'Yes'] = 1 #Private
+#Logit model for Private vs Public on Expend
+mylogit = glm(Dummy ~ Expend, data = college, family = "binomial")
+#Prediction using the logit model to create the density plot
+college$Pred = predict(mylogit, newdata = college, type = "response")
+#Kernal Density plot where No refers to Public and Yes Refers to Private 
+P = ggplot(data = college,aes(Pred, fill=as.factor(Dummy)))+
+  geom_density(alpha=0.5)+
+  theme_minimal()+
+  theme(legend.title = element_blank()) +
+  scale_fill_discrete(labels=c('Public', 'Private'))
+P
+```
+#2)
+```{r}
+set.seed(1)
+N = dim(college)
+#Make a new dataframe which removes the first column which is the college names since we don't want to use that for prediction; making the assumption that the weight the "name" of the school carries towards application amount is actually captured in the other covariates we have measured and not the word itself. 
+college2 = college[,-1]
+# Split 80% of the resampled data as training and the rest as test
+Ntrain = round(N[1] * .8,0)
+s1 = sample(N[1],Ntrain,replace = FALSE)
+#Set the training set to be the 80% of the data and the rest is the test set. 
+Train = college2[s1,]
+Test = college2[-s1,]
+```
+#3)
+```{r}
+OLS = lm(Apps ~ ., data = Train)
+pred = predict(OLS, Test, type = "response")
+#pred_error = mean(Test$Apps != pred)
+MSE_test = mean((pred - Test$Apps)^2) #Test MSE
+cat("The MSE using an OLS model is", MSE_test)
+```
+#4)
+```{r}
+library(glmnet)
+set.seed(1)
+y <- data.matrix(college2[,'Apps']) #The Apps are the y variable
+x <- data.matrix(college2[, colnames(college2) != 'Apps']) #The matrix of predictor variables is all the covariates besides the outcome Apps
+#Getting the training and test sets in matrix format for cv.glmnet 
+x_train <- x[s1,]
+y_train <- y[s1]
+x_test <- x[-s1,]
+y_test <- y[-s1]
+# Fit a ridge regression model on training set.
+cv.out.20folds <- cv.glmnet(x_train, y_train, alpha = 0, nfolds = 20, type.measure = "mse")
+bestlam_20folds <- cv.out.20folds$lambda.min  
+#Predict outcomes on the test data using our model. 
+ridge_pred <- predict(cv.out.20folds, s = bestlam_20folds, newx = x_test) 
+test_MSE = mean((ridge_pred - y_test)^2) # Calculate test MSE
+cat("The best lambda chosen by 20 fold cross validation is", bestlam_20folds, "and the test MSE is", test_MSE)
+```
+#5)
+```{r}
+set.seed(1)
+#Fit the Lasso model on the training data
+lasso_mod_train <- glmnet(x_train, y_train, alpha = 1)
+# Run 20 fold cross validation on the training set to get candidate lambdas.  
+cv.out.lasso <- cv.glmnet(x_train, y_train, alpha = 1, nfolds=20)
+# Select lambda that minimizes training MSE
+bestlam <- cv.out.lasso$lambda.min
+# Use the best lambda to predict on the test data
+lasso_pred <- predict(lasso_mod_train, s = bestlam, newx = x_test) 
+# Calculate test MSE
+Lasso_MSE = mean((lasso_pred - y_test)^2) 
+cat("The best lambda chosen by 20 fold cross validation is", bestlam, "and the test MSE is", Lasso_MSE)
+
+library(knitr)
+library(tidyverse)
+
+betahat <- coef(cv.out.lasso, select = "min")
+#Find all the beta coefficients for our optimal model
+betahats = betahat[-1,]
+all_betas = data.frame(names(betahats), betahats)
+
+#Printing out all coefficients 
+all_coeff = data.frame(names(betahats), betahats)
+colnames(all_coeff) <- c("Name", "Coefficient")
+names = tibble::rownames_to_column(all_coeff)
+colnames(names) <- c("Name", "Name", "Coefficient")
+kable(names[,-2], caption = "All variables")
+
+#Printing out the Nonzero Coefficients
+nonzero = betahats[betahats != 0]
+nonzero_coeff = data.frame(names(nonzero), nonzero)
+colnames(nonzero_coeff) <- c("Name", "Coefficient")
+names = tibble::rownames_to_column(nonzero_coeff)
+colnames(names) <- c("Name", "Name", "Coefficient")
+kable(names[,-2], caption = "Nonzero variables")
+```
+
+##Question 3
+#1) 
+```{r}
+flight = read.csv("FlightDelayData.csv")
+flight$TotalDelay = flight$DepDelay - flight$ArrDelay
+d1 = flight[,colnames(flight) %in% c('ArrDelay','DepDelay','TotalDelay','Distance')]
+library(xtable)
+print(xtable(summary(d1)))
+
+#Grabbing the columns from the dataframe we want to use
+mydata <- flight[, c('ArrDelay','DepDelay','TotalDelay','Distance')]
+#Getting a vector of correleations between the covariates 
+cormat <- round(cor(mydata),2)
+
+##Functions for the correlation matrix and heatmap
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+# Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+#Reorder the correlation matrix
+  reorder_cormat <- function(cormat){
+  # Use correlation between variables as distance
+  dd <- as.dist((1-cormat)/2)
+  hc <- hclust(dd)
+  cormat <-cormat[hc$order, hc$order]
+  }
+
+##Creating the actual heatmap
+library(reshape2)
+library(ggplot2)
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+#Add text and labels to the heatmap
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+ggsave("Heatmap_Q1.pdf", ggheatmap)
+```
+#2)
+```{r}
+#Linear model of Total delay on Distance and Distance^2
+OLS = lm(TotalDelay ~ Distance + I(Distance^2), data = flight)
+#Summary of the regression fit
+summary(OLS)
+```
+#3)
+```{r}
+#Getting the residuals for each of the observations in the dataset
+residuals = resid(OLS)
+#Bootstraping the Coefficients
+library(doParallel)
+ncores = detectCores() - 1
+set.seed(1)
+registerDoParallel(cores=ncores)
+N = length(residuals) #Number of observations of the residuals
+B= 1000 #Choosing to do 1000 bootstrap iterations
+Distance = flight$Distance
+Total_Delay = flight$TotalDelay
+## bootstrapping coefficients from the regression above
+bootstrap_coeff = foreach(b =1:B,.combine = 'cbind') %dopar% {
+  set.seed(b)
+  n = runif(N) # sample from a standard uniform distribution
+  indices <- sample(N,N,replace = T)
+  Dummy = ifelse(n >= 0.5 , 1, -1) #creating the dummies based on the sample
+  ni = residuals[indices] * Dummy #interacting the resampled residuals for each index with an associate dummy
+  x1 = Distance[indices]
+  TotalDelay = coef(OLS)[1] + coef(OLS)[2]*x1 + coef(OLS)[3]*(x1^2) + ni #creating a new outcome variable using the original coefficients from the OLS regression with the resampled coefficients and create a new residual 
+  y1 = Total_Delay[indices]
+  fit<-lm(y1~x1 + I(x1^2))
+  fit$coefficients[2:3] #Grabbing the Distance(Index 2) and Distance^2(Index 3) bootstrapped coefficients
+}
+boot = data.frame(t(bootstrap_coeff))
+colnames(boot) <- c("Distance", "Distance Squared")
+boot_sum = summary(boot)
+kable(boot_sum, caption = "Summary for Bootstrapped Regression Coefficients")
+```
+##Question 4)
+#1)
+```{r}
+#Loading in the built in data set 'india'
+library(gamboostLSS)
+data("india", package = "gamboostLSS")
+#Quantile regression and confidence bands
+library(quantreg)
+tau_seq = seq(0.05,0.90,0.05)
+qfit = rq(stunting ~ mbmi + mage + cage, data = india, tau = tau_seq)
+qfit_plot = plot(summary(rq(stunting ~ mbmi + mage + cage, data = india, tau = tau_seq)))
+```
+#2)
+```{r}
+# Computing 95% bootstrap C.I.’s.
+library(quantreg)
+library(MASS)
+library(doParallel)
+library(matrixStats)
+ncores = detectCores() - 1
+set.seed(1)
+registerDoParallel(cores=ncores) # setting 7 cores for executing code in parallel
+B = 500 # total number of iterations in bootstrap
+N = nrow(india) # number of observations for the imported data
+ntaus = length(tau_seq)
+y = india$stunting
+x1 = india$mbmi
+x2 = india$mage
+x3 = india$cage
+bootDistribution<-foreach(b=1:B,.combine = rbind) %dopar% {
+    set.seed(b)
+    library(quantreg)
+    indices<-sample(N,N,replace = TRUE)
+    fit<-rq(y[indices]~x1[indices]+x2[indices]+x3[indices], tau=tau_seq)
+    fit$coefficients[2:4]
+  }
+
+library(knitr)
+alpha<-0.05 #Set alpha to be .05 since we want a 95% CI
+
+# Get the alpha/2= .025 and 1-alpha/2= 97.5 quantiles of the empirical 
+# distribution of the bootstrap estimates for our 18 diff quantiles. 
+criticalvals_bootstrapcoeff<-t(sapply(1:3, function(column) quantile(bootDistribution[,column],probs=c(alpha/2,(1-alpha/2)),na.rm = T)))
+Covariates = c("Mother's BMI" , "Mother's Age" , "Child's Age") #Create another column for the names of the covriates. 
+# Form the bootstrap confidence intervals for our 18 quantiles 
+CI_twosided_bootstrapcoeff<-cbind(Covariates, round(criticalvals_bootstrapcoeff[,1] , digits = 5),
+                                  round(criticalvals_bootstrapcoeff[,2] , digits = 5))
+kable(CI_twosided_bootstrapcoeff, caption= "Bootstrapped CIs")
+
+#Now check how many of the coefficeints from part 1 fall within this bootstrapped CI.
+library(data.table)
+mbmi_check = count(data.table::between(qfit$coefficients[2,], criticalvals_bootstrapcoeff[1,1], criticalvals_bootstrapcoeff[1,2]))
+cat(mbmi_check, "of the 18 values of quantile regression coefficients lie within the bootsrap confidence interval for Mother's BMI.")
+mage_check = count(data.table::between(qfit$coefficients[3,], criticalvals_bootstrapcoeff[2,1], criticalvals_bootstrapcoeff[2,2]))
+cat(mage_check, "of the 18 values of quantile regression coefficients lie within the bootsrap confidence interval for Mother's age.")
+cage_check = count(data.table::between(qfit$coefficients[4,], criticalvals_bootstrapcoeff[3,1], criticalvals_bootstrapcoeff[3,2]))
+cat(cage_check, "of the 18 values of quantile regression coefficients lie within the bootsrap confidence interval for Mother's BMI")
+
+
+
+```
+
+
+
+
